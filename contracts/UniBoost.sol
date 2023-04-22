@@ -30,7 +30,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
     uint32 public immutable twapInterval;
     
     IUniswapV3Factory public immutable factory;
-    INonfungiblePositionManager public immutable v3PositionManaer;
+    INonfungiblePositionManager public immutable v3PositionManager;
     FeeConfig public feeConfig;
     EnumerableSet.AddressSet healthyAssets;
 
@@ -56,7 +56,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         uint32 _twapInterval
     ) {
         factory = IUniswapV3Factory(_factory);
-        v3PositionManaer = INonfungiblePositionManager(_nonfungiblePositionManager);
+        v3PositionManager = INonfungiblePositionManager(_nonfungiblePositionManager);
         _setFeeConfig(_protocolVault, _protocolFee);
         _setMinBoostPeriod(_minBoostPeriod);
         _setMinStakedTimeForClaimingReward(_minStakedTimeForClaimingReward);
@@ -268,10 +268,10 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
             ,
             ,
             , 
-        ) = v3PositionManaer.positions(_tokenId);
+        ) = v3PositionManager.positions(_tokenId);
         address pool = factory.getPool(token0, token1, fee);
         BoostRoundData storage boostRoundData = _checkBoostActiveAndGetRoundData(pool);
-        v3PositionManaer.safeTransferFrom(msg.sender, address(this), _tokenId);
+        v3PositionManager.safeTransferFrom(msg.sender, address(this), _tokenId);
         _collectFor(_tokenId, msg.sender);
 
         PoolInfo storage poolInfo = poolInfoMap[pool];
@@ -320,7 +320,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
 
         if (
             boostRoundData.status == RoundStatus.insuranceTriggered ||
-            stakedTokenInfo.lastClaimTime + minStakedTimeForClaimingReward >= block.timestamp
+            stakedTokenInfo.lastClaimTime + minStakedTimeForClaimingReward <= block.timestamp
         ) {
             (
                 amount0,
@@ -333,7 +333,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
             insuranceAmount = _claimOwedInsurance(_tokenId, stakedTokenInfo, boostRoundData);
         }
         
-        v3PositionManaer.safeTransferFrom(address(this), msg.sender, _tokenId);
+        v3PositionManager.safeTransferFrom(address(this), msg.sender, _tokenId);
 
         delete stakedTokenInfoMap[_tokenId];
 
@@ -353,7 +353,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
 
         if (
             boostRoundData.status == RoundStatus.insuranceTriggered ||
-            stakedTokenInfo.lastClaimTime + minStakedTimeForClaimingReward >= block.timestamp
+            stakedTokenInfo.lastClaimTime + minStakedTimeForClaimingReward <= block.timestamp
         ) {
             (
                 amount0,
@@ -502,7 +502,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         uint256 amount0,
         uint256 amount1
     ) {
-        (amount0, amount1) = v3PositionManaer.collect(
+        (amount0, amount1) = v3PositionManager.collect(
             INonfungiblePositionManager.CollectParams({
                 tokenId: _tokenId,
                 recipient: _recipient,
