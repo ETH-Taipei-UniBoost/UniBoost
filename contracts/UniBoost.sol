@@ -444,7 +444,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         );
         poolInfo.healthToken.safeTransfer(stakedTokenInfo.owner, amount);
         stakedTokenInfo.insuranceWeight = 0;
-        boostRoundData.insuranceBalance = 0;
+        boostRoundData.insuranceBalance -= amount;
     }
 
     // IERC721Receiver
