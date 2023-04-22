@@ -10,6 +10,8 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import "@uniswap/v3-core/contracts/libraries/FullMath.sol";
+import "@uniswap/v3-core/contracts/libraries/TickMath.sol";
+import "@uniswap/v3-core/contracts/libraries/FixedPoint96.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
@@ -274,26 +276,24 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
 
         PoolInfo storage poolInfo = poolInfoMap[pool];
         int24 twap = _getTwap(pool);
-        uint256 validRange;
-        
+        int24 tickLiquidation = boostRoundData.insuranceTriggerPriceInTick;
+        uint160 ratioTwap = TickMath.getSqrtRatioAtTick(twap);
+     
         if (poolInfo.isToken0Healthy && twap < tickUpper) {
-            validRange = uint256(int256((
-                boostRoundData.insuranceTriggerPriceInTick > tickUpper ?
-                    tickUpper:
-                    boostRoundData.insuranceTriggerPriceInTick
-            ) - twap));
+            insuranceWeight = tickLiquidation > tickUpper ?
+                _getAmount0ForLiquidity(ratioTwap, TickMath.getSqrtRatioAtTick(tickUpper), liquidity) :
+                _getAmount0ForLiquidity(ratioTwap, TickMath.getSqrtRatioAtTick(tickLiquidation), liquidity);
         }
 
         if (poolInfo.isToken1Healthy && twap > tickLower) {
-            validRange = uint256(int256(twap - (
-                boostRoundData.insuranceTriggerPriceInTick < tickLower ?
-                    tickLower:
-                    boostRoundData.insuranceTriggerPriceInTick
-            )));
+            insuranceWeight = tickLiquidation < tickLower ?
+                _getAmount1ForLiquidity(TickMath.getSqrtRatioAtTick(tickLower), ratioTwap, liquidity):
+                _getAmount1ForLiquidity(TickMath.getSqrtRatioAtTick(tickLiquidation), ratioTwap, liquidity);
         }
 
-        insuranceWeight = uint256(liquidity).mulDiv(validRange, uint48(int48(tickUpper - tickLower)));
-        boostRoundData.totalInsuranceWeight += insuranceWeight;
+        if (insuranceWeight > 0) {
+            boostRoundData.totalInsuranceWeight += insuranceWeight;
+        }
         stakedTokenInfoMap[_tokenId] = StakedTokenInfo({
             owner: msg.sender,
             stakedTime: uint64(block.timestamp),
@@ -456,6 +456,16 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         isToken0Healthy = healthyAssets.contains(token0);
         isToken1Healthy = healthyAssets.contains(token1);
         isValidBoostPool = isToken0Healthy != isToken1Healthy;
+    }
+
+    function _getAmount0ForLiquidity(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity) internal pure returns (uint256 amount0) {
+        return (
+            uint256(liquidity) << FixedPoint96.RESOLUTION
+        ).mulDiv(sqrtRatioBX96 - sqrtRatioAX96, sqrtRatioBX96) / sqrtRatioAX96;
+    }
+
+    function _getAmount1ForLiquidity(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity) internal pure returns (uint256 amount1) {
+        return FullMath.mulDiv(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint96.Q96);
     }
 
     function _getTwap(address _pool) internal view returns (int24 twapInTick) {
