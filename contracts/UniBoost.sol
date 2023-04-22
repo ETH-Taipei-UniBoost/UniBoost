@@ -9,12 +9,10 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-
 import "@uniswap/v3-core/contracts/libraries/FullMath.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
-
 
 import "./IUniBoost.sol";
 
@@ -69,6 +67,8 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
 
     function _setMinBoostPeriod(uint256 _minBoostPeriod) internal onlyOwner {
         minBoostPeriod = _minBoostPeriod;
+
+        emit MinBoostPeriodSet(_minBoostPeriod);
     }
 
     function setMinStakedTimeForClaimingReward(uint256 _minStakedTimeForClaimingReward) external {
@@ -77,6 +77,8 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
 
     function _setMinStakedTimeForClaimingReward(uint256 _minStakedTimeForClaimingReward) internal onlyOwner {
         minStakedTimeForClaimingReward = _minStakedTimeForClaimingReward;
+
+        emit MinStakedTimeForClaimingRewardSet(_minStakedTimeForClaimingReward);
     }
 
     function setFeeConfig(address _protocolVault, uint24 _protocolFee) external {
@@ -89,12 +91,24 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
             protocolVault: _protocolVault,
             protocolFee: _protocolFee
         });
+
+        emit FeeConfigSet(_protocolVault, _protocolFee);
     }
 
     function addHealthAssets(address[] calldata assets) external onlyOwner {
         for (uint i; i < assets.length; i++) {
             healthAssets.add(assets[i]);
         }
+
+        emit HealthAssetsChanged();
+    }
+
+    function removeHealthAssets(address[] calldata assets) external onlyOwner {
+        for (uint i; i < assets.length; i++) {
+            healthAssets.remove(assets[i]);
+        }
+
+        emit HealthAssetsChanged();
     }
 
     function getHealthAssets() external view returns (address[] memory assets) {
@@ -113,7 +127,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         int24 _insuranceTriggerPriceInTick,
         uint32 _boostRate,
         uint64 _boostEndTime
-    ) external nonReentrant {
+    ) external nonReentrant returns (uint256 increasedBoostAmount) {
         if (_boostAmount == 0 || _boostRate == 0) revert InvalidBoostAmountOrRate();
         if (_boostEndTime < block.timestamp + minBoostPeriod) revert BoostTimeTooShort();
 
@@ -126,7 +140,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
                 BoostRoundData storage boostRoundData = poolRoundDataMap[_pool][boostRoundDataLength - 1];
                 if (boostRoundData.status == RoundStatus.active) {
                     if (boostRoundData.boostEndTime >= block.timestamp) revert BoostRoundNotEnd();
-                    _removeFund(poolInfo, boostRoundData);
+                    _removeFund(_pool, poolInfo, boostRoundData);
                 }
                 if (boostRoundData.status == RoundStatus.insuranceTriggered) revert InsuranceTriggered();
             }
@@ -162,7 +176,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
             });
         }
 
-        (uint256 increasedBoostAmount, ) = _addFund(poolInfo, _boostAmount, _insuranceAmount);
+        (increasedBoostAmount, ) = _addFund(_pool, poolInfo, _boostAmount, _insuranceAmount);
 
         poolRoundDataMap[_pool].push(BoostRoundData({
             status: RoundStatus.active,
@@ -174,9 +188,22 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
             totalInsuranceWeight: 0,
             insuranceBalance: _insuranceAmount
         }));
+
+        emit BoostEnabled(
+            _pool,
+            increasedBoostAmount,
+            _insuranceAmount,
+            _insuranceTriggerPriceInTick,
+            _boostRate,
+            _boostEndTime
+        );
     }
 
-    function addFund(address _pool, uint256 _amount, uint256 _insuranceAmount) external nonReentrant {
+    function addFund(
+        address _pool,
+        uint256 _amount,
+        uint256 _insuranceAmount
+    ) external nonReentrant returns (uint256 increasedBoostAmount) {
         if (_amount == 0) revert InvalidBoostAmountOrRate();
         
         uint256 boostRoundDataLength = poolRoundDataMap[_pool].length;
@@ -186,7 +213,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
 
         if (boostRoundData.incentivizer != msg.sender) revert NotIncentivizer(); 
 
-        (uint256 increasedBoostAmount, ) = _addFund(poolInfo, _amount, _insuranceAmount);
+        (increasedBoostAmount, ) = _addFund(_pool, poolInfo, _amount, _insuranceAmount);
         boostRoundData.boostRewardBalance += increasedBoostAmount;
 
         if(_insuranceAmount != 0) {
@@ -197,6 +224,8 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
     function liquidate(address _pool) external {
         (bool met, , ) = _checkLiquidateCondition(_pool);
         if (!met) revert liquidateConditionNotMet();
+
+        emit BoostLiquidated(block.timestamp);
     }
 
     function closeCurrentBoostRound(address _pool) external {
@@ -204,9 +233,11 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         
         if (met) revert liquidateConditionMet();
         if (isActive) {
-            _removeFund(poolInfoMap[_pool], boostRoundData);
+            _removeFund(_pool, poolInfoMap[_pool], boostRoundData);
             boostRoundData.status = RoundStatus.closed;
         }
+
+        emit BoostClosed(block.timestamp);
     }
 
     function getPoolInfo(address _pool) external view returns (
@@ -220,7 +251,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         return _getPoolInfo(_pool);
     }
 
-    function stakeLP(uint256 _tokenId) external nonReentrant {
+    function stakeLP(uint256 _tokenId) external nonReentrant returns (uint256 insuranceWeight) {
         (
             ,
             ,
@@ -259,51 +290,78 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
             )));
         }
 
-        uint256 weight = uint256(liquidity).mulDiv(validRange, uint48(int48(tickUpper - tickLower)));
-        boostRoundData.totalInsuranceWeight += weight;
+        insuranceWeight = uint256(liquidity).mulDiv(validRange, uint48(int48(tickUpper - tickLower)));
+        boostRoundData.totalInsuranceWeight += insuranceWeight;
         stakedTokenInfoMap[_tokenId] = StakedTokenInfo({
             owner: msg.sender,
             stakedTime: uint64(block.timestamp),
             pool: pool,
             lastClaimTime: uint64(block.timestamp),
-            insuranceWeight: weight
+            insuranceWeight: insuranceWeight
         });
+
+        emit LPStaked(_tokenId, msg.sender, block.timestamp, pool, insuranceWeight);
     }
 
-    function unstakeLP(uint256 _tokenId) external {
+    function unstakeLP(uint256 _tokenId) external returns (
+        uint256 amount0,
+        uint256 amount1,
+        uint256 rewardAmount,
+        uint256 insuranceAmount  
+    ) {
         StakedTokenInfo storage stakedTokenInfo = stakedTokenInfoMap[_tokenId];
         if (stakedTokenInfo.owner != msg.sender) revert NotTokenOwner();
-        uint256 boostRoundDataLength = poolRoundDataMap[stakedTokenInfo.pool].length;
-        BoostRoundData storage boostRoundData = poolRoundDataMap[stakedTokenInfo.pool][boostRoundDataLength - 1];
-        PoolInfo storage poolInfo = poolInfoMap[stakedTokenInfo.pool];
+        address pool = stakedTokenInfo.pool;
+        uint256 boostRoundDataLength = poolRoundDataMap[pool].length;
+        BoostRoundData storage boostRoundData = poolRoundDataMap[pool][boostRoundDataLength - 1];
+        PoolInfo storage poolInfo = poolInfoMap[pool];
 
         if (
             boostRoundData.status == RoundStatus.insuranceTriggered ||
             stakedTokenInfo.lastClaimTime + minStakedTimeForClaimingReward >= block.timestamp
-        ) _claimReward(_tokenId, stakedTokenInfo, poolInfo, boostRoundData);
+        ) {
+            (
+                amount0,
+                amount1,
+                rewardAmount
+            ) = _claimReward(pool, _tokenId, stakedTokenInfo, poolInfo, boostRoundData);
+        }
 
-        if (boostRoundData.status == RoundStatus.insuranceTriggered) _claimOwedInsurance(
-            stakedTokenInfo, boostRoundData
-        );
+        if (boostRoundData.status == RoundStatus.insuranceTriggered) {
+            insuranceAmount = _claimOwedInsurance(_tokenId, stakedTokenInfo, boostRoundData);
+        }
         
         v3PositionManaer.safeTransferFrom(address(this), msg.sender, _tokenId);
 
         delete stakedTokenInfoMap[_tokenId];
+
+        emit LPUnstaked(_tokenId, msg.sender, block.timestamp, pool, rewardAmount, insuranceAmount);
     }
 
-    function claimReward(uint256 _tokenId) external nonReentrant {
+    function claimReward(uint256 _tokenId) external nonReentrant returns (
+        uint256 amount0,
+        uint256 amount1,
+        uint256 rewardAmount
+    ) {
         StakedTokenInfo storage stakedTokenInfo = stakedTokenInfoMap[_tokenId];
         if (stakedTokenInfo.owner != msg.sender) revert NotTokenOwner();
-        PoolInfo storage poolInfo = poolInfoMap[stakedTokenInfo.pool];
+        address pool = stakedTokenInfo.pool;
+        PoolInfo storage poolInfo = poolInfoMap[pool];
         BoostRoundData storage boostRoundData = _checkBoostActiveAndGetRoundData(stakedTokenInfo.pool);
 
         if (
             boostRoundData.status == RoundStatus.insuranceTriggered ||
             stakedTokenInfo.lastClaimTime + minStakedTimeForClaimingReward >= block.timestamp
-        ) _claimReward(_tokenId, stakedTokenInfo, poolInfo, boostRoundData);
+        ) {
+            (
+                amount0,
+                amount1,
+                rewardAmount
+            ) = _claimReward(pool, _tokenId, stakedTokenInfo, poolInfo, boostRoundData);
+        }
     }
 
-    function claimOwedInsurance(uint256 _tokenId) external {
+    function claimOwedInsurance(uint256 _tokenId) external returns (uint256 insuranceAmount) {
         StakedTokenInfo storage stakedTokenInfo = stakedTokenInfoMap[_tokenId];
         if (stakedTokenInfo.owner != msg.sender) revert NotTokenOwner();
 
@@ -311,10 +369,11 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         BoostRoundData storage boostRoundData = poolRoundDataMap[stakedTokenInfo.pool][boostRoundDataLength - 1];
         if (boostRoundData.status != RoundStatus.insuranceTriggered) revert liquidateConditionNotMet();
 
-        _claimOwedInsurance(stakedTokenInfo, boostRoundData);
+        insuranceAmount = _claimOwedInsurance(_tokenId, stakedTokenInfo, boostRoundData);
     }
 
     function _addFund(
+        address _pool,
         PoolInfo storage poolInfo,
         uint256 _boostAmount,
         uint256 _insuranceAmount
@@ -333,16 +392,21 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         if (_insuranceAmount != 0) {
             poolInfo.healthToken.safeTransferFrom(msg.sender, address(this), _insuranceAmount);
         }
+
+        emit FundAdded(_pool, increasedBoostAmount, _insuranceAmount, protocolFee);
     }
 
     function _removeFund(
+        address _pool,
         PoolInfo storage poolInfo,
         BoostRoundData storage boostRoundData
     ) internal {
         address receiver = boostRoundData.incentivizer;
-        poolInfo.healthToken.safeTransfer(receiver, boostRoundData.insuranceBalance);
         poolInfo.pairedToken.safeTransfer(receiver, boostRoundData.boostRewardBalance);
+        poolInfo.healthToken.safeTransfer(receiver, boostRoundData.insuranceBalance);
         boostRoundData.status = RoundStatus.closed;
+
+        emit FundRemoved(_pool, boostRoundData.boostRewardBalance, boostRoundData.insuranceBalance);
     }
 
     function _checkBoostActiveAndGetRoundData(address _pool) internal view returns (
@@ -403,20 +467,23 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
     }
 
     function _claimReward(
+        address pool,
         uint256 _tokenId,
         StakedTokenInfo storage stakedTokenInfo,
         PoolInfo storage poolInfo,
         BoostRoundData storage boostRoundData
-    ) internal returns (uint256 amount) {
-        (uint256 amount0, uint256 amount1) = _collectFor(_tokenId, stakedTokenInfo.owner);
+    ) internal returns (uint256 amount0, uint256 amount1, uint256 rewardAmount) {
+        (amount0, amount1) = _collectFor(_tokenId, stakedTokenInfo.owner);
 
-        amount = (poolInfo.isToken0Healthy ? amount1 : amount0).mulDiv(boostRoundData.boostRate, 1000000);
-        amount = (amount > boostRoundData.boostRewardBalance ? boostRoundData.boostRewardBalance : amount);
-        if (amount == 0) return amount;
+        rewardAmount = (poolInfo.isToken0Healthy ? amount1 : amount0).mulDiv(boostRoundData.boostRate, 1000000);
+        rewardAmount = (rewardAmount > boostRoundData.boostRewardBalance ? boostRoundData.boostRewardBalance : rewardAmount);
+        if (rewardAmount == 0) return (rewardAmount, amount0, amount1);
 
-        poolInfo.pairedToken.safeTransfer(stakedTokenInfo.owner, amount);
+        poolInfo.pairedToken.safeTransfer(stakedTokenInfo.owner, rewardAmount);
         stakedTokenInfo.lastClaimTime = uint64(block.timestamp);
-        boostRoundData.boostRewardBalance -= amount;
+        boostRoundData.boostRewardBalance -= rewardAmount;
+
+        emit RewardClaimed(_tokenId, msg.sender, block.timestamp, pool, rewardAmount);
     }
 
     function _collectFor(uint256 _tokenId, address _recipient) internal returns (
@@ -431,20 +498,25 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
                 amount1Max: type(uint128).max
             })
         );
+
+        emit FeeCollect(_tokenId, _recipient, amount0, amount1);
     }
 
     function _claimOwedInsurance(
+        uint256 _tokenId,
         StakedTokenInfo storage stakedTokenInfo,
         BoostRoundData storage boostRoundData
-    ) internal {
+    ) internal returns (uint256 amount) {
         PoolInfo storage poolInfo = poolInfoMap[stakedTokenInfo.pool];
-        uint256 amount = boostRoundData.insuranceBalance.mulDiv(
+        amount = boostRoundData.insuranceBalance.mulDiv(
             stakedTokenInfo.insuranceWeight,
             boostRoundData.totalInsuranceWeight
         );
-        poolInfo.healthToken.safeTransfer(stakedTokenInfo.owner, amount);
+        poolInfo.healthToken.safeTransfer(msg.sender, amount);
         stakedTokenInfo.insuranceWeight = 0;
         boostRoundData.insuranceBalance -= amount;
+
+        emit InsuranceClaimed(_tokenId, msg.sender, block.timestamp, stakedTokenInfo.pool, amount);
     }
 
     // IERC721Receiver

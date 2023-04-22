@@ -18,7 +18,52 @@ interface IUniBoost {
     error liquidateConditionNotMet();
     error liquidateConditionMet();
     error NotTokenOwner();
-    
+
+
+    event MinBoostPeriodSet(uint256 indexed minBoostPeriod);
+    event MinStakedTimeForClaimingRewardSet(uint256 indexed minStakedTimeForClaimingReward);
+    event FeeConfigSet(address protocolVault, uint24 protocolFee);
+    event HealthAssetsChanged();
+    event BoostEnabled(
+        address indexed pool,
+        uint256 increasedBoostAmount,
+        uint256 insuranceAmount,
+        int24 insuranceTriggerPriceInTick,
+        uint32 boostRate,
+        uint64 indexed boostEndTime
+    );
+    event FundAdded(
+        address indexed pool,
+        uint256 indexed increasedBoostAmount, 
+        uint256 indexed insuranceAmount,
+        uint256 protocolFee
+    );
+    event FundRemoved(
+        address indexed pool,
+        uint256 indexed boostRewardBalance,
+        uint256 indexed insuranceBalance
+    );
+    event BoostLiquidated(uint256 indexed timestamp);
+    event BoostClosed(uint256 indexed timestamp);
+    event LPStaked(
+        uint256 indexed tokenId,
+        address indexed owner,
+        uint256 indexed stakedTime,
+        address pool,
+        uint256 insuranceWeight
+    );
+    event LPUnstaked(
+        uint256 indexed tokenId,
+        address indexed owner,
+        uint256 indexed unstakedTime,
+        address pool,
+        uint256 rewardAmount,
+        uint256 insuranceAmount
+    );
+    event FeeCollect(uint256 indexed tokenId, address indexed collectFor, uint256 amount0, uint256 amount1);
+    event RewardClaimed(uint256 tokenId, address owner, uint256 claimdTime, address pool, uint256 rewardAmount);
+    event InsuranceClaimed(uint256 tokenId, address owner, uint256 claimdTime, address pool, uint256 insuranceAmount);
+
     enum RoundStatus {
         closed,
         active,
@@ -66,14 +111,27 @@ interface IUniBoost {
         int24 _insuranceTriggerPriceInTick,
         uint32 _boostRate,
         uint64 _boostEndTime
-    ) external;
-    function addFund(address _pool, uint256 _rewardAmount, uint256 _insuranceAmount) external;
+    ) external returns (uint256 increasedBoostAmount);
+    function addFund(
+        address _pool,
+        uint256 _rewardAmount,
+        uint256 _insuranceAmount
+    ) external returns (uint256 increasedBoostAmount);
 
     // for liquidity provider
-    function stakeLP(uint256 _tokenId) external;
-    function unstakeLP(uint256 _tokenId) external;
-    function claimReward(uint256 _tokenId) external;
-    function claimOwedInsurance(uint256 _tokenId) external;
+    function stakeLP(uint256 _tokenId) external returns (uint256 insuranceWeight);
+    function unstakeLP(uint256 _tokenId) external returns (
+        uint256 amount0,
+        uint256 amount1,
+        uint256 rewardAmount,
+        uint256 insuranceAmount  
+    );
+    function claimReward(uint256 _tokenId) external returns (
+        uint256 amount0,
+        uint256 amount1,
+        uint256 rewardAmount
+    );
+    function claimOwedInsurance(uint256 _tokenId) external returns (uint256 insuranceAmount);
 
     // everyone can do this after the price hits the insurance trigger
     function liquidate(address _pool) external;
