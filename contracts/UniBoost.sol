@@ -136,7 +136,7 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
 
         uint256 boostRoundDataLength = poolRoundDataMap[_pool].length;
         PoolInfo storage poolInfo = poolInfoMap[_pool];
-        
+
         if (poolInfo.initialized) {
             if (boostRoundDataLength != 0) {
                 BoostRoundData storage boostRoundData = poolRoundDataMap[_pool][boostRoundDataLength - 1];
