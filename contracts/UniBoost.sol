@@ -125,6 +125,11 @@ contract UniBoost is IUniBoost, Ownable, ReentrancyGuard, IERC721Receiver {
         return healthyAssets.at(_index);
     }
 
+    function getBoostRoundData(address _pool) external view returns (uint256 index, BoostRoundData memory data) {
+        index = poolRoundDataMap[_pool].length - 1;
+        data = poolRoundDataMap[_pool][index];
+    }
+
     function enableBoost(
         address _pool,
         uint256 _boostAmount,
