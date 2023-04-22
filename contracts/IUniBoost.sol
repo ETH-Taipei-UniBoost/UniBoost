@@ -23,7 +23,7 @@ interface IUniBoost {
     event MinBoostPeriodSet(uint256 indexed minBoostPeriod);
     event MinStakedTimeForClaimingRewardSet(uint256 indexed minStakedTimeForClaimingReward);
     event FeeConfigSet(address protocolVault, uint24 protocolFee);
-    event HealthAssetsChanged();
+    event HealthyAssetsChanged(bool add, address[] assets);
     event BoostEnabled(
         address indexed pool,
         uint256 increasedBoostAmount,
@@ -78,7 +78,7 @@ interface IUniBoost {
     struct PoolInfo {
         bool initialized;
         uint24 fee;
-        IERC20 healthToken;
+        IERC20 healthyToken;
         IERC20 pairedToken;
         bool isToken0Healthy;
         bool isToken1Healthy;
