@@ -4,7 +4,7 @@
 
 ### Overview:
 
-A Trustless and Permissionless Liquidity Mining Tool for Uniswap v3
+A Trustless and Permissionless Liquidity Mining Tool with insurance protection for Uniswap v3
 
 -   Incentivizers enable boosting program, providing rewards and insurance for liquidity providers.
 -   Incentivizers aim to boost liquidity of a specific token A,
